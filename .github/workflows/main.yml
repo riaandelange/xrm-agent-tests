@@ -1,0 +1,98 @@
+
+name: XRM Rocks - Runner Diagnostics
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/main.yml'
+
+jobs:
+  diagnostics:
+    name: Windows Runner ${{ matrix.runner }}
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        runner: [1, 2, 3, 4, 5]
+
+    steps:
+      - name: System Information
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $os = Get-CimInstance Win32_OperatingSystem
+          $cpu = Get-CimInstance Win32_Processor
+          $computer = Get-CimInstance Win32_ComputerSystem
+
+          $totalGB = [math]::Round(
+            $os.TotalVisibleMemorySize / 1MB, 2)
+          $freeGB = [math]::Round(
+            $os.FreePhysicalMemory / 1MB, 2)
+          $usedPercent = [math]::Round(
+            (1 - $freeGB / $totalGB) * 100, 1)
+
+          Write-Host "================================="
+          Write-Host "       XRM ROCKS DIAGNOSTICS"
+          Write-Host "================================="
+
+          Write-Host "`n--- GITHUB RUNNER ---"
+          Write-Host "Runner Number: ${{ matrix.runner }}"
+          Write-Host "Runner Name: $env:RUNNER_NAME"
+          Write-Host "Runner OS: $env:RUNNER_OS"
+          Write-Host "Runner Architecture: $env:RUNNER_ARCH"
+          Write-Host "Computer: $env:COMPUTERNAME"
+
+          Write-Host "`n--- OPERATING SYSTEM ---"
+          Write-Host "Name: $($os.Caption)"
+          Write-Host "Version: $($os.Version)"
+          Write-Host "Build: $($os.BuildNumber)"
+          Write-Host "Architecture: $($os.OSArchitecture)"
+          Write-Host "Uptime: $([math]::Round(((Get-Date) - $os.LastBootUpTime).TotalHours, 2)) hours"
+
+          Write-Host "`n--- CPU ---"
+          foreach ($processor in $cpu) {
+            Write-Host "Model: $($processor.Name)"
+            Write-Host "Cores: $($processor.NumberOfCores)"
+            Write-Host "Logical Processors: $($processor.NumberOfLogicalProcessors)"
+            Write-Host "Current CPU Load: $($processor.LoadPercentage)%"
+          }
+
+          Write-Host "`n--- MEMORY ---"
+          Write-Host "Installed RAM: $([math]::Round($computer.TotalPhysicalMemory / 1GB, 2)) GB"
+          Write-Host "Usable RAM: $totalGB GB"
+          Write-Host "Available RAM: $freeGB GB"
+          Write-Host "Memory Usage: $usedPercent%"
+
+          Write-Host "`n--- STORAGE ---"
+          $disks = Get-CimInstance Win32_LogicalDisk |
+            Where-Object {
+              $_.DriveType -eq 3 -and $_.Size -gt 0
+            }
+
+          foreach ($disk in $disks) {
+            $sizeGB = [math]::Round($disk.Size / 1GB, 2)
+            $freeDiskGB = [math]::Round($disk.FreeSpace / 1GB, 2)
+            $usedDiskPct = [math]::Round(
+              (1 - $disk.FreeSpace / $disk.Size) * 100, 1)
+
+            Write-Host "$($disk.DeviceID) Total: $sizeGB GB"
+            Write-Host "Free: $freeDiskGB GB"
+            Write-Host "Used: $usedDiskPct%"
+          }
+
+          Write-Host "`n--- DOTNET SDK ---"
+          dotnet --list-sdks
+
+          Write-Host "`n--- COMPLETED ---"
+
+      - name: Validate .NET SDK
+        shell: pwsh
+        run: |
+          dotnet --info
+          Write-Host "XRM Rocks runner validation passed."
