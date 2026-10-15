@@ -7,7 +7,10 @@ on:
     branches:
       - main
     paths:
-      - '.github/workflows/main.yml'
+      - ".github/workflows/main.yml"
+
+permissions:
+  contents: read
 
 jobs:
   diagnostics:
@@ -31,11 +34,18 @@ jobs:
           $computer = Get-CimInstance Win32_ComputerSystem
 
           $totalGB = [math]::Round(
-            $os.TotalVisibleMemorySize / 1MB, 2)
+            $os.TotalVisibleMemorySize / 1MB, 2
+          )
+
           $freeGB = [math]::Round(
-            $os.FreePhysicalMemory / 1MB, 2)
+            $os.FreePhysicalMemory / 1MB, 2
+          )
+
+          $usedGB = $totalGB - $freeGB
+
           $usedPercent = [math]::Round(
-            (1 - $freeGB / $totalGB) * 100, 1)
+            (1 - $freeGB / $totalGB) * 100, 1
+          )
 
           Write-Host "================================="
           Write-Host "       XRM ROCKS DIAGNOSTICS"
@@ -47,15 +57,20 @@ jobs:
           Write-Host "Runner OS: $env:RUNNER_OS"
           Write-Host "Runner Architecture: $env:RUNNER_ARCH"
           Write-Host "Computer: $env:COMPUTERNAME"
+          Write-Host "Service Account: $(whoami)"
 
           Write-Host "`n--- OPERATING SYSTEM ---"
           Write-Host "Name: $($os.Caption)"
           Write-Host "Version: $($os.Version)"
           Write-Host "Build: $($os.BuildNumber)"
           Write-Host "Architecture: $($os.OSArchitecture)"
-          Write-Host "Uptime: $([math]::Round(((Get-Date) - $os.LastBootUpTime).TotalHours, 2)) hours"
+
+          $uptime = (Get-Date) - $os.LastBootUpTime
+
+          Write-Host "Uptime: $([math]::Round($uptime.TotalHours, 2)) hours"
 
           Write-Host "`n--- CPU ---"
+
           foreach ($processor in $cpu) {
             Write-Host "Model: $($processor.Name)"
             Write-Host "Cores: $($processor.NumberOfCores)"
@@ -66,33 +81,99 @@ jobs:
           Write-Host "`n--- MEMORY ---"
           Write-Host "Installed RAM: $([math]::Round($computer.TotalPhysicalMemory / 1GB, 2)) GB"
           Write-Host "Usable RAM: $totalGB GB"
+          Write-Host "Used RAM: $usedGB GB"
           Write-Host "Available RAM: $freeGB GB"
           Write-Host "Memory Usage: $usedPercent%"
 
           Write-Host "`n--- STORAGE ---"
+
           $disks = Get-CimInstance Win32_LogicalDisk |
             Where-Object {
               $_.DriveType -eq 3 -and $_.Size -gt 0
             }
 
           foreach ($disk in $disks) {
-            $sizeGB = [math]::Round($disk.Size / 1GB, 2)
-            $freeDiskGB = [math]::Round($disk.FreeSpace / 1GB, 2)
-            $usedDiskPct = [math]::Round(
-              (1 - $disk.FreeSpace / $disk.Size) * 100, 1)
+            $sizeGB = [math]::Round(
+              $disk.Size / 1GB, 2
+            )
 
-            Write-Host "$($disk.DeviceID) Total: $sizeGB GB"
-            Write-Host "Free: $freeDiskGB GB"
-            Write-Host "Used: $usedDiskPct%"
+            $freeDiskGB = [math]::Round(
+              $disk.FreeSpace / 1GB, 2
+            )
+
+            $usedDiskPct = [math]::Round(
+              (1 - $disk.FreeSpace / $disk.Size) * 100, 1
+            )
+
+            Write-Host "Drive: $($disk.DeviceID)"
+            Write-Host "  Total: $sizeGB GB"
+            Write-Host "  Free: $freeDiskGB GB"
+            Write-Host "  Used: $usedDiskPct%"
           }
 
           Write-Host "`n--- DOTNET SDK ---"
-          dotnet --list-sdks
 
-          Write-Host "`n--- COMPLETED ---"
+          if (Get-Command dotnet -ErrorAction SilentlyContinue) {
+            dotnet --list-sdks
+          } else {
+            Write-Warning ".NET SDK is not installed or not in PATH."
+          }
+
+          Write-Host "`n--- SYSTEM DIAGNOSTICS COMPLETE ---"
+
+      - name: Public IP and Geolocation
+        shell: pwsh
+        run: |
+          Write-Host "================================="
+          Write-Host "       XRM ROCKS NETWORK INFO"
+          Write-Host "================================="
+
+          try {
+            $info = Invoke-RestMethod `
+              -Uri "https://ifconfig.co/json" `
+              -Method Get `
+              -Headers @{
+                "User-Agent" = "XRM-Rocks-GitHub-Actions/1.0"
+                "Accept" = "application/json"
+              } `
+              -TimeoutSec 15 `
+              -ErrorAction Stop
+
+            Write-Host "`n--- PUBLIC NETWORK ---"
+            Write-Host "Runner: $env:RUNNER_NAME"
+            Write-Host "Public IP: $($info.ip)"
+            Write-Host "Country: $($info.country)"
+            Write-Host "Country ISO: $($info.country_iso)"
+            Write-Host "Region: $($info.region_name)"
+            Write-Host "City: $($info.city)"
+            Write-Host "ASN: $($info.asn)"
+            Write-Host "Organization: $($info.asn_org)"
+            Write-Host "User Agent: $($info.user_agent)"
+          }
+          catch {
+            Write-Warning "Unable to retrieve public network information."
+            Write-Warning $_.Exception.Message
+          }
+
+          Write-Host "`n--- NETWORK CHECK COMPLETE ---"
 
       - name: Validate .NET SDK
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+
+          Write-Host "================================="
+          Write-Host "       XRM ROCKS DOTNET CHECK"
+          Write-Host "================================="
+
+          if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+            throw ".NET SDK is not available."
+          }
+
           dotnet --info
-          Write-Host "XRM Rocks runner validation passed."
+
+          if ($LASTEXITCODE -ne 0) {
+            throw ".NET SDK validation failed."
+          }
+
+          Write-Host "`nXRM Rocks runner validation passed."
